@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import MessageHistoryView from "./components/MessageHistoryView";
 
 function App() {
   const [file, setFile] = useState(null);
@@ -6,6 +7,7 @@ function App() {
   const [ocrText, setOcrText] = useState("");
   const [structuredData, setStructuredData] = useState(null);
   const [error, setError] = useState("");
+  const [showMessages, setShowMessages] = useState(false);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -36,7 +38,7 @@ function App() {
       const res = await fetch("http://localhost:8000/process-invoice/", {
         method: "POST",
         headers: {
-          "X-Client-ID": "test_client", // Add client ID header
+          "X-Client-ID": "test_client",
         },
         body: formData,
       });
@@ -68,6 +70,9 @@ function App() {
       <button onClick={handleUpload} disabled={loading || !file} style={{ marginLeft: 10 }}>
         {loading ? "Processing..." : "Upload & Extract"}
       </button>
+      <button onClick={() => setShowMessages(!showMessages)} style={{ marginLeft: 10 }}>
+        {showMessages ? "Hide Message History" : "View Message History"}
+      </button>
 
       {error && <p style={{ color: "red", marginTop: 10 }}>{error}</p>}
 
@@ -94,6 +99,8 @@ function App() {
           </table>
         </>
       )}
+
+      {showMessages && <MessageHistoryView />}
     </div>
   );
 }
