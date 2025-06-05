@@ -1,3 +1,5 @@
+// src/App.js
+
 import React, { useState } from "react";
 import MessageHistoryView from "./components/MessageHistoryView";
 import SummarizeContext from "./components/SummarizeContext";
@@ -39,7 +41,7 @@ function App() {
       const res = await fetch("http://localhost:8000/process-invoice/", {
         method: "POST",
         headers: {
-          "X-Client-ID": "test_client",
+          "X-Client-ID": "test_client", // For testing, you can hardcode or make it dynamic
         },
         body: formData,
       });
@@ -101,12 +103,12 @@ function App() {
         </>
       )}
 
-{showMessages && (
-  <>
-    <MessageHistoryView />
-    <SummarizeContext />
-  </>
-)}
+      {showMessages && (
+        <>
+          <MessageHistoryView />
+          <SummarizeContext />
+        </>
+      )}
     </div>
   );
 }
