@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import MessageHistoryView from "./components/MessageHistoryView";
+import SummarizeContext from "./components/SummarizeContext";
 
 function App() {
   const [file, setFile] = useState(null);
@@ -100,7 +101,12 @@ function App() {
         </>
       )}
 
-      {showMessages && <MessageHistoryView />}
+{showMessages && (
+  <>
+    <MessageHistoryView />
+    <SummarizeContext />
+  </>
+)}
     </div>
   );
 }
