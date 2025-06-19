@@ -99,7 +99,7 @@ function App() {
     // Build payload exactly as your FastAPI model expects
     const isoDate = transformDate(structuredData.date);
     const payload = {
-      invoice_number: structuredData.invoice_number.replace(/^#/, ""),
+      invoice_number: structuredData.invoice_number.replace(/^#/, "").trim(),
       supplier:       structuredData.supplier,
       date:           isoDate,
       due_date:       computeDueDate(isoDate),
