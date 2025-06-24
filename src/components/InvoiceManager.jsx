@@ -18,9 +18,19 @@ export default function InvoiceManager() {
     return d.toISOString().slice(0,10)
   }
 
+  // parse a string like "2'600.00" or "2 600,00"
+  function parseNum(raw) {
+    return parseFloat(
+      String(raw)
+        .replace(/['\s ]/g, '')
+        .replace(',', '.')
+    ) || 0
+  }
+
   // 1️⃣ Upload PDF & parse
   async function handleUpload() {
-    setError(''); setResult(null)
+    setError('')
+    setResult(null)
     if (!file) return setError('Please select a PDF.')
 
     const form = new FormData()
@@ -30,18 +40,37 @@ export default function InvoiceManager() {
       const { data } = await axios.post('/process-invoice/', form, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
-      const parsed = data.structured_data
+      const p = data.structured_data
+
+      // remap the new fields into our “parsed”
+      const total        = parseNum(p.total)
+      const vatRate      = parseNum(p.vat_rate)
+      const taxableBase  = parseNum(p.taxable_base)
+      const discountAmt  = parseNum(p.discount_total)
+      const vatAmount    = parseNum(p.vat_amount)
+      const netSubtotal  = parseNum(p.net_subtotal)
+
+      const parsed = {
+        supplier:       p.supplier,
+        date:           p.date,
+        invoice_number: p.invoice_number,
+        total,
+        vat_rate:      vatRate,
+        taxable_base:  taxableBase,
+        discount_total: discountAmt,
+        vat_amount:    vatAmount,
+        net_subtotal:  netSubtotal
+      }
+
       setInvoices(list => [
         ...list,
         {
           parsed,
           due_date: computeDueDate(parsed.date),
           currency: parsed.currency || 'USD',
-          line_items: parsed.line_items.map(li => ({
-            description: li.description,
-            amount: Number(li.amount),
-            account_code: li.account_code || ''
-          }))
+          line_items: [
+            { description: 'Invoice Subtotal', amount: parsed.net_subtotal, account_code: '200' }
+          ]
         }
       ])
       setSelectedIdx(invoices.length)
@@ -52,7 +81,8 @@ export default function InvoiceManager() {
 
   // 2️⃣ Book only
   async function handleBookOnly() {
-    setError(''); setResult(null)
+    setError('')
+    setResult(null)
     if (selectedIdx == null) return setError('Select an invoice first.')
 
     const inv = invoices[selectedIdx]
@@ -63,6 +93,8 @@ export default function InvoiceManager() {
         date:           inv.parsed.date,
         due_date:       inv.due_date,
         currency_code:  inv.currency,
+        total:          inv.parsed.total,
+        vat_rate:       inv.parsed.vat_rate,
         line_items:     inv.line_items
       })
       setResult(data)
@@ -73,7 +105,8 @@ export default function InvoiceManager() {
 
   // 3️⃣ Upload & book in one go
   async function handleUploadAndBook() {
-    setError(''); setResult(null)
+    setError('')
+    setResult(null)
     if (!file) return setError('Please select a PDF.')
 
     // parse
@@ -84,6 +117,11 @@ export default function InvoiceManager() {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       const p = data.structured_data
+
+      const total        = parseNum(p.total)
+      const vatRate      = parseNum(p.vat_rate)
+      const netSubtotal  = parseNum(p.net_subtotal)
+
       // book
       const { data: booked } = await axios.post('/book-invoice/', {
         invoice_number: p.invoice_number,
@@ -91,11 +129,11 @@ export default function InvoiceManager() {
         date:           p.date,
         due_date:       computeDueDate(p.date),
         currency_code:  p.currency || 'USD',
-        line_items:     p.line_items.map(li => ({
-          description:  li.description,
-          amount:       Number(li.amount),
-          account_code: li.account_code || ''
-        }))
+        total:          total,
+        vat_rate:       vatRate,
+        line_items: [
+          { description: 'Invoice Subtotal', amount: netSubtotal, account_code: '200' }
+        ]
       })
       setResult(booked)
     } catch (e) {
@@ -110,7 +148,8 @@ export default function InvoiceManager() {
         accept="application/pdf"
         onChange={e => {
           setFile(e.target.files[0])
-          setError(''); setResult(null)
+          setError('')
+          setResult(null)
         }}
       />
 
@@ -142,31 +181,22 @@ export default function InvoiceManager() {
 
           {selectedIdx != null && (
             <div style={{ border: '1px solid #ccc', padding: 10 }}>
-              <h4>Edit Details</h4>
-              <div>
-                <label>Due Date:</label>{' '}
-                <input
-                  type="date"
-                  value={invoices[selectedIdx].due_date}
-                  onChange={e => {
-                    const copy = [...invoices]
-                    copy[selectedIdx].due_date = e.target.value
-                    setInvoices(copy)
-                  }}
-                />
-              </div>
-              <div>
-                <label>Currency:</label>{' '}
-                <input
-                  value={invoices[selectedIdx].currency}
-                  onChange={e => {
-                    const copy = [...invoices]
-                    copy[selectedIdx].currency = e.target.value
-                    setInvoices(copy)
-                  }}
-                />
-              </div>
-              <h5>Line Items</h5>
+              <h4>Extracted Invoice Data</h4>
+              <table>
+                <tbody>
+                  <tr><td><b>Supplier</b></td><td>{invoices[selectedIdx].parsed.supplier}</td></tr>
+                  <tr><td><b>Date</b></td><td>{invoices[selectedIdx].parsed.date}</td></tr>
+                  <tr><td><b>Invoice #</b></td><td>{invoices[selectedIdx].parsed.invoice_number}</td></tr>
+                  <tr><td><b>Total</b></td><td>{invoices[selectedIdx].parsed.total.toFixed(2)}</td></tr>
+                  <tr><td><b>VAT %</b></td><td>{invoices[selectedIdx].parsed.vat_rate.toFixed(2)}%</td></tr>
+                  <tr><td><b>Taxable Base</b></td><td>{invoices[selectedIdx].parsed.taxable_base.toFixed(2)}</td></tr>
+                  <tr><td><b>Discount Total</b></td><td>{invoices[selectedIdx].parsed.discount_total.toFixed(2)}</td></tr>
+                  <tr><td><b>VAT Amount</b></td><td>{invoices[selectedIdx].parsed.vat_amount.toFixed(2)}</td></tr>
+                  <tr><td><b>Net Subtotal</b></td><td>{invoices[selectedIdx].parsed.net_subtotal.toFixed(2)}</td></tr>
+                </tbody>
+              </table>
+
+              <h4>Edit Line Items</h4>
               {invoices[selectedIdx].line_items.map((li, j) => (
                 <div key={j} style={{ marginBottom: 8 }}>
                   <input
