@@ -227,6 +227,12 @@ export default function InvoiceManager() {
                       setInvoices(copy)
                     }}
                   />
+                      <input
+      placeholder="Account Code"
+      value={li.account_code}
+      onChange={e => { /* ... */ }}
+    />
+    {li.category && <span style={{ marginLeft: 6, color: "#888" }}>({li.category})</span>}
                 </div>
               ))}
             </div>
