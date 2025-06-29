@@ -1,9 +1,11 @@
+// src/MultiInvoiceManager.jsx
+
 import React, { useState } from "react";
 import axios from "axios";
 
-axios.defaults.baseURL = process.env.REACT_APP_API_BASE || "http://localhost:8000";
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
 
-export default function InvoiceManager() {
+export default function MultiInvoiceManager() {
   const [files, setFiles]       = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [results, setResults]   = useState([]);
@@ -11,16 +13,35 @@ export default function InvoiceManager() {
   const [loading, setLoading]   = useState(false);
 
   function computeDueDate(dateStr) {
-    const d = new Date(dateStr);
-    d.setDate(d.getDate() + 30);
-    return d.toISOString().slice(0,10);
+    try {
+      let dt;
+      if (dateStr && typeof dateStr === "string") {
+        if (dateStr.match(/^\d{2}\.\d{2}\.\d{4}$/)) {
+          const [d, m, y] = dateStr.split(".");
+          dt = new Date(`${y}-${m}-${d}`);
+        } else if (dateStr.match(/^\d{2}\/\d{2}\/\d{4}$/)) {
+          const [d, m, y] = dateStr.split("/");
+          dt = new Date(`${y}-${m}-${d}`);
+        } else {
+          dt = new Date(dateStr);
+        }
+      } else {
+        dt = new Date(dateStr);
+      }
+      if (isNaN(dt)) throw new Error("Invalid date");
+      dt.setDate(dt.getDate() + 30);
+      return dt.toISOString().slice(0, 10);
+    } catch (e) {
+      const dt = new Date();
+      dt.setDate(dt.getDate() + 30);
+      return dt.toISOString().slice(0, 10);
+    }
   }
 
   function parseNum(raw) {
     return parseFloat(String(raw).replace(/['\s]/g, "").replace(",", ".")) || 0;
   }
 
-  // ─── 1️⃣ Upload & parse all ────────────────────────────
   async function handleUpload() {
     setError("");
     setResults([]);
@@ -38,7 +59,7 @@ export default function InvoiceManager() {
         Array.from(files).map(async (file) => {
           const form = new FormData();
           form.append("file", file);
-          const { data } = await axios.post("/process-invoice/", form, {
+          const { data } = await axios.post(`${API_BASE}/process-invoice/`, form, {
             headers: { "Content-Type": "multipart/form-data" }
           });
           const p = data.structured_data;
@@ -65,7 +86,12 @@ export default function InvoiceManager() {
             },
             due_date: computeDueDate(p.date),
             line_items: [
-              { description: "Invoice Subtotal", amount: net_sub, account_code: "200", category: "" }
+              {
+                description: "Invoice Subtotal",
+                amount: net_sub,
+                account_code: "200",
+                category: ""
+              }
             ]
           };
         })
@@ -79,7 +105,49 @@ export default function InvoiceManager() {
     }
   }
 
-  // ─── 2️⃣ Book all in one go ────────────────────────────
+  // Suggest categories using backend/AI
+  async function handleSuggestCategories() {
+    setError("");
+    setLoading(true);
+
+    try {
+      const updated = await Promise.all(
+        invoices.map(async (inv) => {
+          const { data } = await axios.post(
+            `${API_BASE}/categorize-expense/`,
+            {
+              client_id: "test-client", // REQUIRED by backend!
+              invoice_number: inv.parsed.invoice_number,
+              supplier: inv.parsed.supplier,
+              line_items: inv.line_items.map(({ description, amount }) => ({
+                description,
+                amount
+              }))
+            },
+            { headers: { "Content-Type": "application/json" } }
+          );
+          // Map AI response to update each line item's category
+          const desc2cat = {};
+          (data.categories || []).forEach(item => {
+            desc2cat[item.description] = item.category;
+          });
+          return {
+            ...inv,
+            line_items: inv.line_items.map(li => ({
+              ...li,
+              category: desc2cat[li.description] || li.category || ""
+            }))
+          };
+        })
+      );
+      setInvoices(updated);
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleBookAll() {
     setError("");
     setResults([]);
@@ -94,10 +162,14 @@ export default function InvoiceManager() {
         currency_code:  inv.parsed.currency,
         total:          inv.parsed.total,
         vat_rate:       inv.parsed.vat_rate,
-        line_items:     inv.line_items
+        line_items:     inv.line_items.map(li => ({
+          description: li.description,
+          amount: li.amount,
+          category: li.category || ""
+        }))
       }));
 
-      const { data } = await axios.post("/batch/book-invoices/", payload, {
+      const { data } = await axios.post(`${API_BASE}/batch/book-invoices/`, payload, {
         headers: { "Content-Type": "application/json" }
       });
       setResults(data);
@@ -111,7 +183,6 @@ export default function InvoiceManager() {
   return (
     <div style={{ maxWidth: 900, margin: "2rem auto", fontFamily: "Arial" }}>
       <h1>Batch Invoice Upload & Booking</h1>
-
       <input
         type="file"
         accept="application/pdf"
@@ -120,6 +191,9 @@ export default function InvoiceManager() {
       />
       <button onClick={handleUpload} disabled={loading} style={{ margin: "0 1rem" }}>
         {loading ? "Working…" : "Upload & Parse All"}
+      </button>
+      <button onClick={handleSuggestCategories} disabled={loading || !invoices.length}>
+        {loading ? "Suggesting…" : "Suggest Categories"}
       </button>
       <button onClick={handleBookAll} disabled={loading || !invoices.length}>
         {loading ? "Booking…" : "Book All to Xero"}
@@ -170,13 +244,14 @@ export default function InvoiceManager() {
                           style={{ width: 80 }}
                         />{" "}
                         <input
-                          value={li.account_code}
+                          value={li.category || ""}
+                          placeholder="Category"
                           onChange={e => {
                             const copy = [...invoices];
-                            copy[i].line_items[j].account_code = e.target.value;
+                            copy[i].line_items[j].category = e.target.value;
                             setInvoices(copy);
                           }}
-                          style={{ width: 60 }}
+                          style={{ width: 120 }}
                         />
                       </div>
                     ))}
