@@ -1,16 +1,25 @@
-// src/MultiInvoiceManager.jsx
-
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
 
 export default function MultiInvoiceManager() {
-  const [files, setFiles]       = useState([]);
+  const [files, setFiles] = useState([]);
   const [invoices, setInvoices] = useState([]);
-  const [results, setResults]   = useState([]);
-  const [error, setError]       = useState("");
-  const [loading, setLoading]   = useState(false);
+  const [results, setResults] = useState([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [categories, setCategories] = useState([]);
+
+  useEffect(() => {
+    axios.get(`${API_BASE}/accounts/expense/`).then(res => {
+      setCategories(res.data); // [{ name, code }]
+    });
+  }, []);
+
+  function parseNum(raw) {
+    return parseFloat(String(raw).replace(/['\s]/g, "").replace(",", ".")) || 0;
+  }
 
   function computeDueDate(dateStr) {
     try {
@@ -38,10 +47,7 @@ export default function MultiInvoiceManager() {
     }
   }
 
-  function parseNum(raw) {
-    return parseFloat(String(raw).replace(/['\s]/g, "").replace(",", ".")) || 0;
-  }
-
+  // === HANDLE UPLOAD ===
   async function handleUpload() {
     setError("");
     setResults([]);
@@ -89,58 +95,51 @@ export default function MultiInvoiceManager() {
               {
                 description: "Invoice Subtotal",
                 amount: net_sub,
-                account_code: "200",
-                category: ""
+                category: "" // will be filled by AI below
               }
             ]
           };
         })
       );
 
-      setInvoices(parsedList);
-    } catch (e) {
-      setError(e.response?.data?.detail || e.message);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Suggest categories using backend/AI
-  async function handleSuggestCategories() {
-    setError("");
-    setLoading(true);
-
-    try {
-      const updated = await Promise.all(
-        invoices.map(async (inv) => {
-          const { data } = await axios.post(
-            `${API_BASE}/categorize-expense/`,
-            {
-              client_id: "test-client", // REQUIRED by backend!
-              invoice_number: inv.parsed.invoice_number,
-              supplier: inv.parsed.supplier,
-              line_items: inv.line_items.map(({ description, amount }) => ({
-                description,
-                amount
+      // Auto-suggest categories for each parsed invoice
+      const allowed_categories = categories.map(cat => cat.name);
+      const withSuggestions = await Promise.all(
+        parsedList.map(async (inv) => {
+          try {
+            const { data } = await axios.post(
+              `${API_BASE}/categorize-expense/`,
+              {
+                client_id: "test-client",
+                invoice_number: inv.parsed.invoice_number,
+                supplier: inv.parsed.supplier,
+                line_items: inv.line_items.map(({ description, amount }) => ({
+                  description,
+                  amount
+                })),
+                allowed_categories
+              },
+              { headers: { "Content-Type": "application/json" } }
+            );
+            const desc2cat = {};
+            (data.categories || []).forEach(item => {
+              desc2cat[item.description] = item.category;
+            });
+            return {
+              ...inv,
+              line_items: inv.line_items.map(li => ({
+                ...li,
+                category: desc2cat[li.description] || li.category || ""
               }))
-            },
-            { headers: { "Content-Type": "application/json" } }
-          );
-          // Map AI response to update each line item's category
-          const desc2cat = {};
-          (data.categories || []).forEach(item => {
-            desc2cat[item.description] = item.category;
-          });
-          return {
-            ...inv,
-            line_items: inv.line_items.map(li => ({
-              ...li,
-              category: desc2cat[li.description] || li.category || ""
-            }))
-          };
+            };
+          } catch (e) {
+            // If AI fails, fallback to blank category (force user to pick)
+            return inv;
+          }
         })
       );
-      setInvoices(updated);
+
+      setInvoices(withSuggestions);
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
     } finally {
@@ -148,6 +147,7 @@ export default function MultiInvoiceManager() {
     }
   }
 
+  // === HANDLE BOOK ALL ===
   async function handleBookAll() {
     setError("");
     setResults([]);
@@ -191,9 +191,6 @@ export default function MultiInvoiceManager() {
       />
       <button onClick={handleUpload} disabled={loading} style={{ margin: "0 1rem" }}>
         {loading ? "Working…" : "Upload & Parse All"}
-      </button>
-      <button onClick={handleSuggestCategories} disabled={loading || !invoices.length}>
-        {loading ? "Suggesting…" : "Suggest Categories"}
       </button>
       <button onClick={handleBookAll} disabled={loading || !invoices.length}>
         {loading ? "Booking…" : "Book All to Xero"}
@@ -243,16 +240,22 @@ export default function MultiInvoiceManager() {
                           }}
                           style={{ width: 80 }}
                         />{" "}
-                        <input
+                        <select
                           value={li.category || ""}
-                          placeholder="Category"
                           onChange={e => {
                             const copy = [...invoices];
                             copy[i].line_items[j].category = e.target.value;
                             setInvoices(copy);
                           }}
-                          style={{ width: 120 }}
-                        />
+                          style={{ width: 200 }}
+                        >
+                          <option value="">Select Category</option>
+                          {categories.map(c => (
+                            <option value={c.name} key={c.code}>
+                              {c.name} ({c.code})
+                            </option>
+                          ))}
+                        </select>
                       </div>
                     ))}
                   </td>
