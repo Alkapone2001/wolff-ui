@@ -61,6 +61,7 @@ export default function MultiInvoiceManager() {
     }
 
     try {
+      // 1. Parse all PDFs
       const parsedList = await Promise.all(
         Array.from(files).map(async (file) => {
           const form = new FormData();
@@ -93,16 +94,17 @@ export default function MultiInvoiceManager() {
             due_date: computeDueDate(p.date),
             line_items: [
               {
-                description: "Invoice Subtotal",
+                description: "", // will be filled by AI below
                 amount: net_sub,
-                category: "" // will be filled by AI below
+                category: "", // will be filled by AI below
+                ai_suggested_category: ""
               }
             ]
           };
         })
       );
 
-      // Auto-suggest categories for each parsed invoice
+      // 2. AI category suggestion
       const allowed_categories = categories.map(cat => cat.name);
       const withSuggestions = await Promise.all(
         parsedList.map(async (inv) => {
@@ -129,17 +131,51 @@ export default function MultiInvoiceManager() {
               ...inv,
               line_items: inv.line_items.map(li => ({
                 ...li,
-                category: desc2cat[li.description] || li.category || ""
+                category: desc2cat[li.description] || li.category || "",
+                ai_suggested_category: desc2cat[li.description] || ""
               }))
             };
           } catch (e) {
-            // If AI fails, fallback to blank category (force user to pick)
             return inv;
           }
         })
       );
 
-      setInvoices(withSuggestions);
+      // 3. AI description suggestion (MERGE fields, don't overwrite!)
+      const withDescriptions = await Promise.all(
+        withSuggestions.map(async (inv) => {
+          try {
+            const { data } = await axios.post(
+              `${API_BASE}/describe-invoice/`,
+              {
+                supplier: inv.parsed.supplier,
+                invoice_number: inv.parsed.invoice_number,
+                date: inv.parsed.date,
+                total: inv.parsed.total,
+                line_items: inv.line_items.map(li => ({
+                  description: li.description,
+                  amount: li.amount
+                }))
+              },
+              { headers: { "Content-Type": "application/json" } }
+            );
+            // Only update description, keep AI fields
+            return {
+              ...inv,
+              line_items: inv.line_items.map(li => ({
+                ...li,
+                description: data.description,
+                ai_suggested_category: li.ai_suggested_category,
+                category: li.category
+              }))
+            };
+          } catch {
+            return inv;
+          }
+        })
+      );
+
+      setInvoices(withDescriptions);
     } catch (e) {
       setError(e.response?.data?.detail || e.message);
     } finally {
@@ -178,6 +214,37 @@ export default function MultiInvoiceManager() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function renderAIBadge(li) {
+    if (!li.ai_suggested_category) return null;
+    if (li.category !== li.ai_suggested_category)
+      return (
+        <span title="AI suggested this category" style={{
+          marginLeft: 6,
+          fontSize: 11,
+          color: "#546e7a",
+          background: "#e3f2fd",
+          padding: "2px 6px",
+          borderRadius: "1em",
+          border: "1px solid #b3e5fc"
+        }}>
+          AI: {li.ai_suggested_category}
+        </span>
+      );
+    return (
+      <span title="AI suggested this category" style={{
+        marginLeft: 6,
+        fontSize: 11,
+        color: "#2e7d32",
+        background: "#e8f5e9",
+        padding: "2px 6px",
+        borderRadius: "1em",
+        border: "1px solid #81c784"
+      }}>
+        AI: {li.ai_suggested_category}
+      </span>
+    );
   }
 
   return (
@@ -228,7 +295,7 @@ export default function MultiInvoiceManager() {
                             copy[i].line_items[j].description = e.target.value;
                             setInvoices(copy);
                           }}
-                          style={{ width: 140 }}
+                          style={{ width: 250 }}
                         />{" "}
                         <input
                           type="number"
@@ -256,6 +323,7 @@ export default function MultiInvoiceManager() {
                             </option>
                           ))}
                         </select>
+                        {renderAIBadge(li)}
                       </div>
                     ))}
                   </td>
