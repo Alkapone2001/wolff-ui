@@ -3,6 +3,15 @@ import axios from "axios";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
 
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function MultiInvoiceManager() {
   const [files, setFiles] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -61,7 +70,7 @@ export default function MultiInvoiceManager() {
     }
 
     try {
-      // 1. Parse all PDFs
+      // 1. Parse all PDFs and get their base64
       const parsedList = await Promise.all(
         Array.from(files).map(async (file) => {
           const form = new FormData();
@@ -77,8 +86,12 @@ export default function MultiInvoiceManager() {
           const vat_amount  = parseNum(p.vat_amount);
           const net_sub     = parseNum(p.net_subtotal);
 
+          // Get PDF base64
+          const pdf_bytes = await fileToBase64(file);
+
           return {
             fileName: file.name,
+            pdf_bytes,
             parsed: {
               supplier:       p.supplier,
               date:           p.date,
@@ -202,7 +215,8 @@ export default function MultiInvoiceManager() {
           description: li.description,
           amount: li.amount,
           category: li.category || ""
-        }))
+        })),
+        pdf_bytes:      inv.pdf_bytes, // <--- Attach PDF as base64!
       }));
 
       const { data } = await axios.post(`${API_BASE}/batch/book-invoices/`, payload, {
