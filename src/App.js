@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import MultiInvoiceManager from "./components/MultiInvoiceManager";
 import MessageHistoryView from "./components/MessageHistoryView";
 import SummarizeContext from "./components/SummarizeContext";
+import BankReconciliationManager from "./components/BankReconciliationManager";
 
 function App() {
   const [showMessages, setShowMessages] = useState(false);
@@ -22,6 +23,7 @@ function App() {
           </div>
         )}
       </div>
+       <BankReconciliationManager />
     </div>
   );
 }
