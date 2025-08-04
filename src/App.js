@@ -1,31 +1,20 @@
 import React, { useState } from "react";
-import MultiInvoiceManager from "./components/MultiInvoiceManager";
-import MessageHistoryView from "./components/MessageHistoryView";
-import SummarizeContext from "./components/SummarizeContext";
+import AppHeader from "./components/AppHeader";
+import TabNav from "./components/TabNav";
+import InvoiceManager from "./components/InvoiceManager";
 import BankReconciliationManager from "./components/BankReconciliationManager";
 
-function App() {
-  const [showMessages, setShowMessages] = useState(false);
+export default function App() {
+  const [tab, setTab] = useState("invoices");
 
   return (
-    <div style={{ maxWidth: 1100, margin: "40px auto", fontFamily: "Arial" }}>
-      <h1>Batch Invoice Upload & Booking</h1>
-      <MultiInvoiceManager />
-
-      <div style={{ margin: "2rem 0" }}>
-        <button onClick={() => setShowMessages(!showMessages)}>
-          {showMessages ? "Hide Message History" : "View Message History"}
-        </button>
-        {showMessages && (
-          <div>
-            <MessageHistoryView />
-            <SummarizeContext />
-          </div>
-        )}
+    <div className="main-app">
+      <AppHeader />
+      <TabNav activeTab={tab} setTab={setTab} />
+      <div style={{ marginTop: 30 }}>
+        {tab === "invoices" && <InvoiceManager />}
+        {tab === "bank" && <BankReconciliationManager />}
       </div>
-       <BankReconciliationManager />
     </div>
   );
 }
-
-export default App;
