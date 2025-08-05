@@ -6,21 +6,18 @@ const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:8000";
 export default function InvoiceManager() {
   const [files, setFiles] = useState([]);
   const [invoices, setInvoices] = useState([]);
-  const [results, setResults] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     axios.get(`${API_BASE}/accounts/expense/`).then(res => {
-      setCategories(res.data); // [{ name, code }]
+      setCategories(res.data);
     });
   }, []);
 
-  function parseNum(raw) {
-    return parseFloat(String(raw).replace(/['\s]/g, "").replace(",", ".")) || 0;
-  }
-
+  // Utility for due date and number parsing
   function computeDueDate(dateStr) {
     try {
       let dt = new Date(dateStr);
@@ -33,8 +30,11 @@ export default function InvoiceManager() {
       return dt.toISOString().slice(0, 10);
     }
   }
+  function parseNum(raw) {
+    return parseFloat(String(raw).replace(/['\s]/g, "").replace(",", ".")) || 0;
+  }
 
-  // 1️⃣ Upload & Parse All
+  // Upload and parse invoices
   async function handleUpload() {
     setError(""); setResults([]); setInvoices([]); setLoading(true);
     if (!files.length) {
@@ -49,30 +49,30 @@ export default function InvoiceManager() {
             headers: { "Content-Type": "multipart/form-data" }
           });
           const p = data.structured_data;
-          const total       = parseNum(p.total);
-          const vat_rate    = parseNum(p.vat_rate);
-          const taxable     = parseNum(p.taxable_base);
-          const discount    = parseNum(p.discount_total);
-          const vat_amount  = parseNum(p.vat_amount);
-          const net_sub     = parseNum(p.net_subtotal);
+          const net_sub = parseNum(p.net_subtotal);
           return {
             fileName: file.name,
             parsed: {
-              supplier:       p.supplier,
-              date:           p.date,
+              supplier: p.supplier,
+              date: p.date,
               invoice_number: p.invoice_number,
-              total,
-              vat_rate,
-              taxable_base:   taxable,
-              discount_total: discount,
-              vat_amount,
-              net_subtotal:   net_sub,
-              currency:       p.currency || "USD"
+              total: parseNum(p.total),
+              vat_rate: parseNum(p.vat_rate),
+              taxable_base: parseNum(p.taxable_base),
+              discount_total: parseNum(p.discount_total),
+              vat_amount: parseNum(p.vat_amount),
+              net_subtotal: net_sub,
+              currency: p.currency || "USD"
             },
             due_date: computeDueDate(p.date),
-            line_items: [
-              { description: "Invoice Subtotal", amount: net_sub, account_code: "200", category: "" }
-            ]
+            // Force the user to type something here!
+            line_items: [{
+              description: "",
+              amount: net_sub,
+              account_code: "",
+              category: "",
+              ai_suggested: ""
+            }]
           };
         })
       );
@@ -84,19 +84,74 @@ export default function InvoiceManager() {
     }
   }
 
-  // 2️⃣ Book All to Xero
+  // Live categorize a line item using AI
+  async function aiCategorize(lineItem, cb) {
+    if (!lineItem.description) return;
+    try {
+      const { data } = await axios.post(`${API_BASE}/categorize-expense/`, {
+        client_id: "test_client",
+        invoice_number: "N/A",
+        supplier: "N/A",
+        line_items: [{ description: lineItem.description, amount: lineItem.amount }]
+      });
+      if (data.categories && data.categories[0]) {
+        cb(data.categories[0]);
+      }
+    } catch (e) {
+      // fallback: leave blank, or error state
+      cb({ category: "", account_code: "", account_name: "" });
+    }
+  }
+
+  // Change description and re-categorize
+  function handleDescriptionChange(i, j, desc) {
+    const copy = [...invoices];
+    copy[i].line_items[j].description = desc;
+    copy[i].line_items[j].category = "";  // reset
+    copy[i].line_items[j].account_code = "";
+    setInvoices(copy);
+
+    // Trigger AI categorization on debounce (or immediately here for demo)
+    aiCategorize(
+      { description: desc, amount: copy[i].line_items[j].amount },
+      cat => {
+        const invoices2 = [...copy];
+        invoices2[i].line_items[j].category = cat.category;
+        invoices2[i].line_items[j].account_code = cat.account_code;
+        invoices2[i].line_items[j].ai_suggested = cat.category;
+        setInvoices(invoices2);
+      }
+    );
+  }
+
+  // Book to Xero
   async function handleBookAll() {
     setError(""); setResults([]); setLoading(true);
+    // Validate all descriptions and account_codes
+    for (const inv of invoices) {
+      for (const li of inv.line_items) {
+        if (!li.description || !li.account_code) {
+          setError("All descriptions and categories must be set.");
+          setLoading(false);
+          return;
+        }
+      }
+    }
     try {
       const payload = invoices.map(inv => ({
         invoice_number: inv.parsed.invoice_number,
-        supplier:       inv.parsed.supplier,
-        date:           inv.parsed.date,
-        due_date:       inv.due_date,
-        currency_code:  inv.parsed.currency,
-        total:          inv.parsed.total,
-        vat_rate:       inv.parsed.vat_rate,
-        line_items:     inv.line_items
+        supplier: inv.parsed.supplier,
+        date: inv.parsed.date,
+        due_date: inv.due_date,
+        currency_code: inv.parsed.currency,
+        total: inv.parsed.total,
+        vat_rate: inv.parsed.vat_rate,
+        line_items: inv.line_items.map(li => ({
+          description: li.description,
+          amount: li.amount,
+          category: li.category,
+          account_code: li.account_code
+        }))
       }));
       const { data } = await axios.post(`${API_BASE}/batch/book-invoices/`, payload, {
         headers: { "Content-Type": "application/json" }
@@ -168,7 +223,7 @@ export default function InvoiceManager() {
               <tbody>
                 {invoices.map((inv, i) => (
                   <tr key={i} style={{ textAlign: "center" }}>
-                    <td>{i+1}</td>
+                    <td>{i + 1}</td>
                     <td>{inv.fileName}</td>
                     <td>{inv.parsed.supplier}</td>
                     <td>{inv.parsed.date}</td>
@@ -177,15 +232,12 @@ export default function InvoiceManager() {
                     <td>{inv.parsed.vat_rate.toFixed(2)}%</td>
                     <td>
                       {inv.line_items.map((li, j) => (
-                        <div key={j} style={{ marginBottom: 4 }}>
+                        <div key={j} style={{ marginBottom: 6 }}>
                           <input
                             value={li.description}
-                            onChange={e => {
-                              const copy = [...invoices];
-                              copy[i].line_items[j].description = e.target.value;
-                              setInvoices(copy);
-                            }}
-                            style={{ width: 160, borderRadius: 6, border: "1px solid #dae7f4", marginRight: 8 }}
+                            placeholder="Describe this expense"
+                            onChange={e => handleDescriptionChange(i, j, e.target.value)}
+                            style={{ width: 220, borderRadius: 6, border: "1px solid #dae7f4", marginRight: 8, padding: 4 }}
                           />
                           <input
                             type="number"
@@ -195,22 +247,24 @@ export default function InvoiceManager() {
                               copy[i].line_items[j].amount = Number(e.target.value);
                               setInvoices(copy);
                             }}
-                            style={{ width: 90, borderRadius: 6, border: "1px solid #dae7f4", marginRight: 8 }}
+                            style={{ width: 90, borderRadius: 6, border: "1px solid #dae7f4", marginRight: 8, padding: 4 }}
                           />
-                          <select
-                            value={li.account_code}
-                            onChange={e => {
-                              const copy = [...invoices];
-                              copy[i].line_items[j].account_code = e.target.value;
-                              setInvoices(copy);
-                            }}
-                            style={{ borderRadius: 6, border: "1px solid #dae7f4", width: 90 }}
-                          >
-                            <option value="">Code</option>
-                            {categories.map(c => (
-                              <option value={c.code} key={c.code}>{c.name} ({c.code})</option>
-                            ))}
-                          </select>
+                          <input
+                            readOnly
+                            value={li.account_code || ""}
+                            style={{ width: 80, borderRadius: 6, border: "1px solid #dae7f4", marginRight: 8, background: "#f5f5f5" }}
+                            placeholder="Account code"
+                          />
+                          {li.ai_suggested && (
+                            <span style={{
+                              marginLeft: 8,
+                              color: "#2e7d32",
+                              fontWeight: 600,
+                              fontSize: 13
+                            }}>
+                              AI: {li.ai_suggested}
+                            </span>
+                          )}
                         </div>
                       ))}
                     </td>
@@ -229,7 +283,7 @@ export default function InvoiceManager() {
             {results.map((r, i) => (
               <li key={i} style={{ marginBottom: 10 }}>
                 <strong>Invoice {invoices[i]?.parsed.invoice_number}:</strong>{" "}
-                {r.error ? <span style={{color:"#b63d3d"}}>{r.error}</span> : JSON.stringify(r)}
+                {r.error ? <span style={{ color: "#b63d3d" }}>{r.error}</span> : JSON.stringify(r)}
               </li>
             ))}
           </ul>
